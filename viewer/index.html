@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remote Computer</title>
+  <link rel="icon" type="image/png" href="/shared/favicon.png">
+  <link rel="stylesheet" href="/shared/theme.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- ============ ĐĂNG NHẬP ============ -->
+  <section id="login">
+    <form id="login-form" autocomplete="off">
+      <div class="mini-dial">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1686FF" /><stop offset="100%" stop-color="#09D3FF" /></linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="52" class="track" />
+          <circle cx="60" cy="60" r="52" class="arc" pathLength="100" />
+        </svg>
+        <span class="mini-face" data-icon="mouse-pointer-2"></span>
+      </div>
+      <h1>Remote Computer</h1>
+      <p class="muted">Kết nối tới <span class="num target" id="target"></span></p>
+
+      <label class="caps" for="pw">Mật khẩu</label>
+      <input id="pw" class="num" type="password" inputmode="numeric" maxlength="12" placeholder="••• •••" autofocus required>
+      <p class="hint">Mật khẩu 6 số hiện trên màn hình máy bị điều khiển</p>
+      <button type="submit" class="btn-solid" id="connect-btn"><span data-icon="log-in"></span>Kết nối</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+    <p class="foot"><span data-icon="shield-check"></span>Kết nối trực tiếp, mã hoá qua mạng Tailscale của bạn</p>
+  </section>
+
+  <!-- ============ ĐIỀU KHIỂN ============ -->
+  <section id="remote" hidden>
+    <video id="screen" autoplay playsinline muted tabindex="-1"></video>
+    <div id="waiting">
+      <div class="spinner"></div>
+      <span>Đang nhận hình…</span>
+    </div>
+
+    <div id="hot"></div>
+    <button id="handle" title="Hiện thanh công cụ"><span class="live"></span><span id="handle-name"></span><span data-icon="chevron-down"></span></button>
+
+    <div id="dock">
+      <div class="dock-info">
+        <div class="dock-host"><span class="live"></span><span id="host-name"></span></div>
+        <div class="dock-stats num" id="stats">—</div>
+      </div>
+      <div class="dock-tiles">
+        <div class="tile" id="tile-display" title="Chọn màn hình">
+          <span data-icon="monitor"></span><span>Màn hình</span>
+          <select id="display-select"></select>
+        </div>
+        <div class="tile" title="Chất lượng hình">
+          <span data-icon="gauge"></span><span id="quality-label">Cao</span>
+          <select id="quality-select">
+            <option value="high">Cao — nét nhất</option>
+            <option value="medium">Trung bình</option>
+            <option value="low">Thấp — mạng yếu</option>
+          </select>
+        </div>
+        <button class="tile" id="tile-swap" title="Đổi Ctrl ⇄ Cmd khi điều khiển khác hệ điều hành"><span data-icon="command"></span><span>Ctrl⇄Cmd</span></button>
+        <button class="tile" id="tile-clip" title="Đồng bộ clipboard (chữ)"><span data-icon="clipboard"></span><span>Clipboard</span></button>
+        <button class="tile" id="tile-full" title="Toàn màn hình"><span data-icon="maximize"></span><span>Phóng to</span></button>
+        <button class="tile danger" id="tile-quit" title="Ngắt kết nối"><span data-icon="power"></span><span>Ngắt</span></button>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+  </section>
+
+  <script src="/shared/icons.js"></script>
+  <script src="/viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+{
+  "name": "remote-computer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tự điều khiển máy tính từ xa qua Tailscale/LAN",
+  "author": "Thang Vu",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/thangvd2312/remote-computer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thangvd2312/remote-computer.git"
+  },
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:assets": "node scripts/build-assets.js",
+    "build:icons": "electron scripts/render-icon.js && sh scripts/make-icons.sh",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "publish:mac": "sh scripts/publish-mac.sh"
+  },
+  "remoteComputer": {
+    "guideUrl": "https://mdviewer.thangvu.io.vn/blog/huong-dan-cai-dat-remote-computer-6751fe",
+    "releasesUrl": "https://github.com/thangvd2312/remote-computer/releases/latest"
+  },
+  "build": {
+    "appId": "vn.io.thangvu.remotecomputer",
+    "productName": "Remote Computer",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "viewer/**/*",
+      "shared/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "publish": null,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "identity": "Thang Vu Van",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "artifactName": "Remote-Computer-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "artifactName": "Remote-Computer-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network",
+      "icon": "build/icon.png",
+      "artifactName": "Remote-Computer-${version}-${arch}.${ext}",
+      "maintainer": "thangvd2312 <thangvd2312@users.noreply.github.com>"
+    },
+    "npmRebuild": false
+  },
+  "dependencies": {
+    "@nut-tree-fork/libnut-darwin": "^2.7.5",
+    "@nut-tree-fork/libnut-linux": "^2.7.5",
+    "@nut-tree-fork/libnut-win32": "^2.7.5",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@fontsource/be-vietnam-pro": "^5.3.0",
+    "@fontsource/poppins": "^5.3.0",
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
+    "lucide-static": "^1.72.0"
+  }
+}

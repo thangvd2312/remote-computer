@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+  <title>Remote Computer</title>
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="host.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <img class="logo" src="../shared/logo.png" alt="">
+      <h1>Remote Computer</h1>
+      <span class="avatar num" id="avatar" title=""></span>
+    </header>
+
+    <div class="banner danger" id="server-error" hidden></div>
+
+    <main>
+      <!-- ============ TRANG CHỦ ============ -->
+      <section class="view" id="view-home">
+        <p class="hostline" id="hostname"></p>
+
+        <div class="dial" id="dial">
+          <span class="tick t1"></span><span class="tick t2"></span><span class="tick t3"></span><span class="tick t4"></span>
+          <svg viewBox="0 0 240 240" aria-hidden="true">
+            <defs>
+              <linearGradient id="arc-grad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#1686FF" />
+                <stop offset="100%" stop-color="#09D3FF" />
+              </linearGradient>
+            </defs>
+            <circle class="ring-track" cx="120" cy="120" r="104" />
+            <g class="ring-spin">
+              <circle class="ring-arc" cx="120" cy="120" r="104" pathLength="100" />
+              <circle class="ring-knob" cx="120" cy="16" r="7" />
+            </g>
+          </svg>
+          <div class="dial-face">
+            <span class="caps">Mật khẩu</span>
+            <span class="dial-value num" id="password">––– –––</span>
+            <span class="live-dot" id="live-dot"></span>
+          </div>
+        </div>
+
+        <div class="status">
+          <div class="status-title" id="status-title">Đang chờ kết nối</div>
+          <div class="status-sub" id="status-sub">Mở địa chỉ bên dưới trên máy điều khiển</div>
+        </div>
+
+        <div class="actions">
+          <button class="circle-btn" id="new-pass" title="Đổi mật khẩu" data-icon="refresh-cw"></button>
+          <button class="pill-btn" id="copy-link"><span data-icon="link"></span>Copy link</button>
+          <button class="circle-btn danger" id="kick" title="Ngắt kết nối" data-icon="x" disabled></button>
+        </div>
+
+        <button class="banner warn clickable" id="setup-banner" hidden>
+          <span data-icon="triangle-alert"></span>
+          <span id="setup-banner-text"></span>
+          <span class="banner-cta">Xem hướng dẫn</span>
+        </button>
+
+        <div class="card stats">
+          <button class="stat stat-wide" id="stat-address" title="Bấm để copy link">
+            <span class="badge-icon" data-icon="network"></span>
+            <span><span class="stat-value num" id="address">—</span><span class="caps" id="address-label">Địa chỉ</span></span>
+            <span class="copy-hint" data-icon="copy"></span>
+          </button>
+          <div class="stat">
+            <span class="badge-icon" data-icon="laptop"></span>
+            <span><span class="stat-value" id="os-name">—</span><span class="caps">HĐH</span></span>
+          </div>
+          <div class="stat">
+            <span class="badge-icon" data-icon="monitor"></span>
+            <span><span class="stat-value num" id="displays">—</span><span class="caps">Màn hình</span></span>
+          </div>
+          <button class="stat" id="stat-checks" title="Xem hướng dẫn">
+            <span class="badge-icon" id="checks-icon" data-icon="shield-check"></span>
+            <span><span class="stat-value num" id="checks">—</span><span class="caps">Sẵn sàng</span></span>
+          </button>
+        </div>
+
+        <div class="other-net" id="other-net" hidden>
+          <span class="caps">Mạng khác</span>
+          <div class="chips" id="other-addresses"></div>
+        </div>
+
+        <div class="tiles-grid">
+          <label class="feature">
+            <div class="feature-top"><span class="feature-icon" data-icon="mouse-pointer-2"></span><span class="switch"><input type="checkbox" data-setting="allowInput"><span class="track"></span><span class="knob"></span></span></div>
+            <div class="feature-name">Điều khiển</div>
+            <div class="feature-desc">Chuột &amp; bàn phím</div>
+          </label>
+          <label class="feature">
+            <div class="feature-top"><span class="feature-icon" data-icon="clipboard"></span><span class="switch"><input type="checkbox" data-setting="clipboard"><span class="track"></span><span class="knob"></span></span></div>
+            <div class="feature-name">Clipboard</div>
+            <div class="feature-desc">Đồng bộ chữ 2 chiều</div>
+          </label>
+          <label class="feature">
+            <div class="feature-top"><span class="feature-icon" data-icon="coffee"></span><span class="switch"><input type="checkbox" data-setting="keepAwake"><span class="track"></span><span class="knob"></span></span></div>
+            <div class="feature-name">Giữ máy thức</div>
+            <div class="feature-desc">Khi đang điều khiển</div>
+          </label>
+          <label class="feature">
+            <div class="feature-top"><span class="feature-icon" data-icon="shield-check"></span><span class="switch"><input type="checkbox" data-setting="tailscaleOnly"><span class="track"></span><span class="knob"></span></span></div>
+            <div class="feature-name">Chỉ Tailscale</div>
+            <div class="feature-desc">Chặn kết nối từ LAN</div>
+          </label>
+        </div>
+
+        <div class="version-row">
+          <span>Phiên bản <b class="num" id="app-version"></b></span>
+          <button class="link-btn" id="open-releases"><span data-icon="download"></span>Tải bản mới</button>
+        </div>
+      </section>
+
+      <!-- ============ HƯỚNG DẪN ============ -->
+      <section class="view" id="view-guide" hidden>
+        <h2 class="view-title">Hướng dẫn cài đặt</h2>
+        <p class="view-sub">Làm trên <b>máy bị điều khiển</b>. Máy điều khiển chỉ cần trình duyệt.</p>
+        <div class="chips" id="os-chips"></div>
+        <p class="guide-intro" id="guide-intro"></p>
+        <div class="card checks" id="checks-card">
+          <div class="checks-head"><span class="caps">Kiểm tra máy này</span><button class="btn-ghost" id="recheck"><span data-icon="refresh-cw"></span>Kiểm tra lại</button></div>
+          <ul id="check-list"></ul>
+        </div>
+        <ol class="steps" id="steps"></ol>
+        <ul class="notes" id="notes"></ul>
+        <button class="btn-ghost guide-full" id="open-guide"><span data-icon="external-link"></span>Mở bản hướng dẫn đầy đủ (web)</button>
+      </section>
+
+      <!-- ============ HOẠT ĐỘNG ============ -->
+      <section class="view" id="view-activity" hidden>
+        <h2 class="view-title">Hoạt động</h2>
+        <div class="card session" id="session-card"></div>
+        <div class="caps list-head">Nhật ký kết nối</div>
+        <ul class="activity" id="activity"></ul>
+        <p class="empty" id="activity-empty">Chưa có hoạt động nào.</p>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button data-view="guide" title="Hướng dẫn" data-icon="sliders-horizontal"><span class="nav-dot" id="guide-dot" hidden></span></button>
+      <button data-view="home" title="Trang chủ" data-icon="house" class="active"></button>
+      <button data-view="activity" title="Hoạt động" data-icon="chart-column"></button>
+    </nav>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="../shared/icons.js"></script>
+  <script src="guide-data.js"></script>
+  <script src="host-ui.js"></script>
+  <script src="stream.js"></script>
+</body>
+</html>

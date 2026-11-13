@@ -1,0 +1,142 @@
+/* Theme dùng chung cho cửa sổ host và trang điều khiển.
+   Phong cách: nền tối, thẻ bo tròn lớn, nhấn bằng dải xanh #1686FF → #09D3FF. */
+@import url('fonts.css');
+
+:root {
+  --bg: #1E1E27;
+  --card: #282832;
+  --card-hi: #30303C;
+  --well: #1A1A22;
+  --line: rgba(255, 255, 255, 0.06);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --text: #F2F3F7;
+  --muted: #8B8C99;
+  --faint: #5E5F6D;
+  --blue: #1686FF;
+  --cyan: #09D3FF;
+  --grad: linear-gradient(135deg, #1686FF 0%, #09D3FF 100%);
+  --ok: #2FD27A;
+  --warn: #FFB547;
+  --danger: #FF5A6A;
+  --r-xl: 28px;
+  --r-lg: 22px;
+  --r-md: 16px;
+  --r-sm: 12px;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.38);
+  --font: 'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --num: 'Poppins', 'Be Vietnam Pro', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 400 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+code { font: 12.5px var(--mono); background: var(--well); padding: 1px 6px; border-radius: 6px; }
+
+.icon { width: 20px; height: 20px; flex: none; display: block; }
+.num { font-family: var(--num); font-weight: 600; letter-spacing: 0.01em; }
+.caps { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.muted { color: var(--muted); }
+.grad-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* Thẻ */
+.card { background: var(--card); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); }
+
+/* Chip viền (giống chip "Living Room") */
+.chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 16px; border-radius: 999px; border: 1px solid var(--line-strong);
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 13.5px; white-space: nowrap;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.chip:hover { color: var(--text); }
+.chip.active { color: var(--cyan); border-color: var(--blue); background: rgba(22, 134, 255, 0.08); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+
+/* Nút viền tròn / viên thuốc (giống "−  Auto  +") */
+.pill-btn, .circle-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1.5px solid var(--blue); background: transparent; color: var(--cyan);
+  cursor: pointer; transition: background .15s, transform .1s, opacity .15s;
+}
+.pill-btn { height: 46px; padding: 0 26px; border-radius: 999px; font-weight: 500; font-size: 15px; }
+.circle-btn { width: 46px; height: 46px; border-radius: 50%; }
+.pill-btn:hover, .circle-btn:hover { background: rgba(22, 134, 255, 0.12); }
+.pill-btn:active, .circle-btn:active { transform: scale(0.96); }
+.pill-btn:disabled, .circle-btn:disabled { opacity: .35; cursor: default; background: transparent; transform: none; }
+.circle-btn.danger, .pill-btn.danger { border-color: var(--danger); color: var(--danger); }
+.circle-btn.danger:hover, .pill-btn.danger:hover { background: rgba(255, 90, 106, 0.12); }
+.btn-solid {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 48px; padding: 0 24px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--grad); color: #fff; font-weight: 600; font-size: 15px;
+  box-shadow: 0 8px 24px rgba(22, 134, 255, 0.35); transition: filter .15s, transform .1s;
+}
+.btn-solid:hover { filter: brightness(1.08); }
+.btn-solid:active { transform: scale(0.98); }
+.btn-solid:disabled { filter: grayscale(.6) brightness(.8); cursor: wait; }
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: transparent; color: var(--text); cursor: pointer; font-size: 13px;
+}
+.btn-ghost:hover { border-color: var(--blue); color: var(--cyan); }
+.btn-ghost .icon { width: 15px; height: 15px; }
+
+/* Công tắc (giống toggle trên thẻ thiết bị) */
+.switch { position: relative; display: inline-block; width: 62px; height: 34px; flex: none; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track {
+  position: absolute; inset: 0; border-radius: 999px; background: var(--well);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+.switch .knob {
+  position: absolute; top: 4px; left: 4px; width: 26px; height: 26px; border-radius: 50%;
+  background: #6E6E7A; transition: transform .2s ease, background .2s, box-shadow .2s;
+}
+.switch input:checked ~ .knob {
+  transform: translateX(28px); background: linear-gradient(160deg, #20A8FF, #1686FF);
+  box-shadow: 0 0 14px rgba(22, 160, 255, 0.65);
+}
+.switch input:focus-visible ~ .track { outline: 2px solid var(--blue); outline-offset: 2px; }
+.switch input:disabled ~ .knob { opacity: .4; }
+
+/* Ô vuông icon + nhãn (giống TEMP / FAN SPEED / MODE / TIMER) */
+.tile {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-width: 74px; height: 74px; padding: 8px 10px; border-radius: var(--r-md); border: 0;
+  background: var(--card-hi); color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 500;
+  letter-spacing: .04em; text-transform: uppercase; transition: color .15s, background .15s;
+}
+.tile .icon { width: 24px; height: 24px; }
+.tile:hover { color: var(--text); }
+.tile.on { color: var(--cyan); }
+.tile.danger { color: var(--danger); }
+.tile select { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+/* Biểu tượng tròn nền gradient nhạt */
+.badge-icon {
+  width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none;
+  background: rgba(22, 134, 255, 0.12); color: var(--cyan);
+}
+.badge-icon.ok { background: rgba(47, 210, 122, 0.12); color: var(--ok); }
+.badge-icon.warn { background: rgba(255, 181, 71, 0.12); color: var(--warn); }
+.badge-icon.danger { background: rgba(255, 90, 106, 0.12); color: var(--danger); }
+.badge-icon.mutedbg { background: rgba(255, 255, 255, 0.05); color: var(--muted); }
+
+/* Thông báo nổi */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px);
+  padding: 10px 16px; border-radius: 999px; background: var(--card-hi); box-shadow: var(--shadow);
+  border: 1px solid var(--line); font-size: 13.5px;
+}
+.toast .icon { width: 18px; height: 18px; color: var(--cyan); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

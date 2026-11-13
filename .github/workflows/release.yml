@@ -1,0 +1,58 @@
+# Đẩy tag v* (ví dụ: git tag v0.1.0 && git push origin v0.1.0)
+#  -> tạo GitHub Release (nếu chưa có) -> build Windows + Linux -> đính kèm file cài vào Release.
+# Bản macOS build trên máy dev vì cần ký bằng chứng chỉ trong Keychain: npm run publish:mac
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tạo Release nếu chưa có
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Remote Computer $GITHUB_REF_NAME" --generate-notes
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        run: npx electron-builder ${{ matrix.target }} --publish never
+
+      - name: Đính kèm vào Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          files=(dist/*.exe dist/*.AppImage dist/*.deb)
+          ls -la "${files[@]}"
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
