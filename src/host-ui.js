@@ -178,6 +178,8 @@ const KIND = {
   disconnect: { icon: 'log-out', cls: 'mutedbg' },
   fail: { icon: 'lock', cls: 'danger' },
   blocked: { icon: 'ban', cls: 'danger' },
+  lock: { icon: 'lock', cls: 'mutedbg' },
+  unlock: { icon: 'circle-check', cls: 'ok' },
 };
 
 function renderSession() {

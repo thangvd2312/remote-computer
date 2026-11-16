@@ -10,6 +10,9 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const input = require('./input');
+const lock = require('./lock');
+
+const LOCK_TEST = lock.lockTestDelay(process.argv) !== null;
 
 // Lỗi không bắt được: ghi vào file log thay vì để Electron hiện hộp thoại chặn luồng chính
 // (host bị treo vì 1 hộp thoại thì người điều khiển từ xa không thể bấm tắt).
@@ -52,6 +55,7 @@ let sleepBlocker = null;
 let clipTimer = null;
 let lastClip = '';       // nội dung clipboard host đã biết, tránh gửi lặp/vọng lại
 let isAdmin = null;      // Windows: app có đang chạy quyền Administrator không
+let lockState = { isLocked: () => false }; // gán thật trong app.whenReady
 const failures = new Map(); // ip -> { count, until }
 const activity = [];        // nhật ký kết nối
 const blockedLogAt = new Map(); // ip -> lần cuối ghi log "bị chặn" (tránh spam)
@@ -351,6 +355,7 @@ wss.on('connection', (ws, req) => {
         break;
       case 'input':
         if (!settings.allowInput) break;
+        if (lockState.isLocked()) lock.wakeDisplay(); // tự giới hạn tần suất
         try { input.handle(msg.e, toScreen); } catch (e) { console.error('[input]', e.message); }
         break;
       case 'select-display':
@@ -390,6 +395,7 @@ function startSession(ws, ip, send) {
   active = { ws, ip, send, since: Date.now() };
   currentDisplayId = String(screen.getPrimaryDisplay().id);
   if (settings.keepAwake) startKeepAwake();
+  lock.wakeDisplay();
   log('connect', ip, 'Bắt đầu điều khiển');
   send({
     type: 'auth-ok',
@@ -399,6 +405,7 @@ function startSession(ws, ip, send) {
     display: currentDisplayId,
     inputAvailable: canControl(),
     clipboard: settings.clipboard,
+    locked: lockState.isLocked(),
   });
   sendToUi('session-start', currentDisplayId);
   pushStatus();
@@ -565,6 +572,20 @@ app.whenReady().then(() => {
     if (!systemPreferences.isTrustedAccessibilityClient(false)) systemPreferences.isTrustedAccessibilityClient(true);
   }
 
+  // Chế độ thử nghiệm màn hình khoá: không mở server/cửa sổ, chạy xong tự thoát
+  if (LOCK_TEST) {
+    lock.runLockTest(process.argv, input, shell).catch((e) => { logCrash('lock-test', e); app.quit(); });
+    return;
+  }
+
+  lockState = lock.watch((locked) => {
+    if (!active) return;
+    log(locked ? 'lock' : 'unlock', active.ip, locked ? 'Máy này đã khoá màn hình' : 'Máy này đã mở khoá');
+    if (locked) lock.wakeDisplay();
+    input.releaseAll(); // tránh kẹt phím khi chuyển qua/lại màn hình khoá
+    active.send({ type: 'host-lock', locked });
+  });
+
   server.on('error', (e) => {
     console.error(`[http] không mở được cổng ${PORT}:`, e.message);
     sendToUi('server-error', e.code === 'EADDRINUSE' ? `Cổng ${PORT} đang bị chiếm (app đang mở ở cửa sổ khác?)` : e.message);
@@ -578,4 +599,4 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (!win) createWindow(); });
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (!LOCK_TEST) app.quit(); });

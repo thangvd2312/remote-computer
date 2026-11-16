@@ -63,6 +63,7 @@ async function onMessage(msg) {
       $('quality-label').textContent = QUALITY_LABEL.high;
       fillDisplays(msg.displays, msg.display);
       applyHostSettings({ input: msg.inputAvailable, clipboard: msg.clipboard });
+      setHostLocked(!!msg.locked, false);
       showDock(true, 2500); // hiện thanh công cụ lúc đầu để người dùng biết nó ở đâu
       break;
     case 'auth-fail':
@@ -88,7 +89,15 @@ async function onMessage(msg) {
     case 'clipboard':
       receiveClipboard(msg.text);
       break;
+    case 'host-lock':
+      setHostLocked(!!msg.locked, true);
+      break;
   }
+}
+
+function setHostLocked(locked, announce) {
+  $('lock-badge').hidden = !locked;
+  if (announce) toast(locked ? 'Máy host vừa khoá màn hình' : 'Máy host đã mở khoá', locked ? 'lock' : 'circle-check', 3000);
 }
 
 function applyHostSettings({ input, clipboard }) {
@@ -128,6 +137,7 @@ function teardown(reason) {
   pendingIce = [];
   clearInterval(statsTimer);
   video.srcObject = null;
+  $('lock-badge').hidden = true;
   $('remote').hidden = true;
   $('login').hidden = false;
   $('connect-btn').disabled = false;
