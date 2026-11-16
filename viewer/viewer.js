@@ -65,6 +65,7 @@ async function onMessage(msg) {
       applyHostSettings({ input: msg.inputAvailable, clipboard: msg.clipboard });
       setHostLocked(!!msg.locked, false);
       showTouchControls(true);
+      watchFirstFrame();
       showDock(true, 2500); // hiện thanh công cụ lúc đầu để người dùng biết nó ở đâu
       break;
     case 'auth-fail':
@@ -86,6 +87,9 @@ async function onMessage(msg) {
       break;
     case 'error':
       toast(msg.message, 'triangle-alert', 6000);
+      break;
+    case 'notice':
+      toast(msg.message, 'info', 5000);
       break;
     case 'clipboard':
       receiveClipboard(msg.text);
@@ -140,6 +144,7 @@ function teardown(reason) {
   clearInterval(statsTimer);
   video.srcObject = null;
   $('lock-badge').hidden = true;
+  clearTimeout(noVideoTimer);
   showTouchControls(false);
   $('remote').hidden = true;
   $('login').hidden = false;
@@ -148,7 +153,20 @@ function teardown(reason) {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
 
-video.addEventListener('loadeddata', () => { $('waiting').hidden = true; });
+video.addEventListener('loadeddata', () => { $('waiting').hidden = true; clearTimeout(noVideoTimer); });
+
+// Quá 10s vẫn chưa có hình -> báo rõ thay vì quay vòng mãi
+let noVideoTimer = null;
+function watchFirstFrame() {
+  clearTimeout(noVideoTimer);
+  noVideoTimer = setTimeout(() => {
+    if (!active || $('waiting').hidden) return;
+    const state = pc ? pc.connectionState : 'none';
+    toast(state === 'connected'
+      ? 'Đã kết nối nhưng host chưa gửi hình — thử Ngắt rồi kết nối lại'
+      : 'Chưa nhận được hình từ host — kiểm tra 2 máy thấy nhau qua Tailscale', 'triangle-alert', 10000);
+  }, 10000);
+}
 
 // ---------------- Thanh công cụ ----------------
 let dockTimer = null;

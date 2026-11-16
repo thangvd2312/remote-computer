@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('host', {
   openGuide: () => ipcRenderer.invoke('open-guide'),
   openReleases: () => ipcRenderer.invoke('open-releases'),
   getSource: (displayId) => ipcRenderer.invoke('get-source', displayId),
+  getSnapshot: (displayId, maxWidth) => ipcRenderer.invoke('get-snapshot', displayId, maxWidth),
   sendSignal: (msg) => ipcRenderer.send('signal', msg),
 
   onStatus: on('status'),

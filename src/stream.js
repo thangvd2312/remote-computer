@@ -16,19 +16,17 @@
   async function captureDisplay(displayId) {
     const src = await host.getSource(displayId);
     let { width, height } = src;
-    if (width > MAX_WIDTH) { height = Math.round(height * MAX_WIDTH / width); width = MAX_WIDTH; }
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: src.id,
-          maxWidth: width, maxHeight: height,
-          minWidth: Math.min(width, 640), minHeight: Math.min(height, 360),
-          maxFrameRate: 30,
-        },
-      },
-    });
+    const mandatory = { chromeMediaSource: 'desktop', chromeMediaSourceId: src.id, maxFrameRate: 30 };
+    // width/height = 0: host không biết kích thước (máy khoá, màn hình tắt) -> KHÔNG đặt giới hạn,
+    // để hệ thống chụp theo độ phân giải thật (đặt 0×0 thì macOS từ chối tạo luồng chụp)
+    if (width > 0 && height > 0) {
+      if (width > MAX_WIDTH) { height = Math.round(height * MAX_WIDTH / width); width = MAX_WIDTH; }
+      Object.assign(mandatory, {
+        maxWidth: width, maxHeight: height,
+        minWidth: Math.min(width, 640), minHeight: Math.min(height, 360),
+      });
+    }
+    const s = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory } });
     s.getVideoTracks()[0].contentHint = 'detail'; // ưu tiên chữ sắc nét thay vì chuyển động mượt
     return s;
   }
@@ -43,22 +41,116 @@
   }
 
   function stopSession() {
+    stopSnapshot();
     if (pc) { pc.close(); pc = null; }
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
     sender = null;
     pendingIce = [];
   }
 
+  // ---------------- Chế độ dự phòng: ảnh chụp liên tục ----------------
+  // macOS: máy khoá + màn hình đã tắt thì luồng chụp trực tiếp không khởi động được nữa
+  // ("Could not start video source", ScreenCaptureKit báo kích thước 0×0) cho tới khi mở khoá,
+  // kể cả khi đã đánh thức màn hình. Ảnh chụp tĩnh (thumbnail) thì vẫn chụp được màn hình khoá
+  // -> vẽ liên tục lên canvas rồi gửi canvas như video (~5 hình/giây, đủ để nhìn & gõ mật khẩu).
+  // Trong lúc đó cứ vài giây thử lại luồng trực tiếp; được thì tự chuyển sang (sau khi mở khoá).
+  const SNAP_INTERVAL_MS = 200;
+  const SNAP_MAX_WIDTH = 1600;
+  const LIVE_RETRY_MS = 4000;
+  let snap = null;          // { displayId, canvas, ctx, stopped }
+  let liveTimer = null;
+  let currentDisplayId = null;
+
+  async function drawSnapshot(s) {
+    const res = await host.getSnapshot(s.displayId, SNAP_MAX_WIDTH);
+    if (!res || s.stopped) return false;
+    const bmp = await createImageBitmap(new Blob([res.jpeg], { type: 'image/jpeg' }));
+    if (s.canvas.width !== bmp.width || s.canvas.height !== bmp.height) {
+      s.canvas.width = bmp.width;
+      s.canvas.height = bmp.height;
+    }
+    s.ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    return true;
+  }
+
+  async function startSnapshot(displayId) {
+    const canvas = document.createElement('canvas');
+    const s = { displayId, canvas, ctx: canvas.getContext('2d'), stopped: false };
+    if (!(await drawSnapshot(s))) throw new Error('không chụp được ảnh màn hình');
+    const out = canvas.captureStream(1000 / SNAP_INTERVAL_MS);
+    out.getVideoTracks()[0].contentHint = 'detail';
+    (async () => {
+      while (!s.stopped) {
+        const t0 = performance.now();
+        try { await drawSnapshot(s); } catch (e) { console.warn('[snapshot]', e.message); }
+        await new Promise((r) => setTimeout(r, Math.max(30, SNAP_INTERVAL_MS - (performance.now() - t0))));
+      }
+    })();
+    snap = s;
+    console.log('[capture] chuyển sang chế độ ảnh chụp (máy đang khoá / màn hình tắt)');
+    return out;
+  }
+
+  function stopSnapshot() {
+    if (snap) snap.stopped = true;
+    snap = null;
+    clearTimeout(liveTimer);
+    liveTimer = null;
+  }
+
+  // Đang ở chế độ ảnh chụp -> định kỳ thử lại luồng trực tiếp
+  function scheduleLiveRetry(seq) {
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(async () => {
+      if (!snap || seq !== sessionSeq || !sender) return;
+      try {
+        const live = await captureDisplay(currentDisplayId);
+        if (!snap || seq !== sessionSeq || !sender) { live.getTracks().forEach((t) => t.stop()); return; }
+        await sender.replaceTrack(live.getVideoTracks()[0]);
+        const old = stream;
+        stream = live;
+        stopSnapshot();
+        if (old) old.getTracks().forEach((t) => t.stop());
+        await applyQuality();
+        console.log('[capture] đã chuyển lại hình trực tiếp');
+        host.sendSignal({ type: 'notice', message: 'Đã chuyển sang hình trực tiếp' });
+      } catch {
+        scheduleLiveRetry(seq);
+      }
+    }, LIVE_RETRY_MS);
+  }
+
+  // Thử luồng trực tiếp (thêm 1 lần sau khi đánh thức màn hình); không được thì dùng ảnh chụp
+  async function startCapture(displayId, seq) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await captureDisplay(displayId);
+      } catch (e) {
+        console.warn(`[capture] lần ${attempt} lỗi: ${e.message}`);
+        if (seq !== sessionSeq) throw e;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    const s = await startSnapshot(displayId);
+    host.sendSignal({ type: 'notice', message: 'Máy host đang khoá — hình cập nhật chậm, đủ để nhập mật khẩu' });
+    return s;
+  }
+
+  let sessionSeq = 0;
   host.onSessionStart(async (displayId) => {
     stopSession();
     quality = 'high';
+    currentDisplayId = displayId;
+    const seq = ++sessionSeq;
     try {
-      stream = await captureDisplay(displayId);
+      stream = await startCapture(displayId, seq);
     } catch (e) {
       console.error(e);
-      host.sendSignal({ type: 'error', message: `Host không chụp được màn hình: ${e.message}` });
+      if (seq === sessionSeq) host.sendSignal({ type: 'error', message: `Host không chụp được màn hình: ${e.message}` });
       return;
     }
+    if (seq !== sessionSeq) { stream.getTracks().forEach((t) => t.stop()); stream = null; stopSnapshot(); return; }
 
     pc = new RTCPeerConnection({ iceServers: [] }); // cùng mạng Tailscale/LAN: không cần STUN/TURN
     const thisPc = pc;
@@ -79,6 +171,7 @@
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     host.sendSignal({ type: 'offer', sdp: pc.localDescription.toJSON() });
+    if (snap) scheduleLiveRetry(seq);
   });
 
   host.onSignal(async (msg) => {
@@ -95,8 +188,17 @@
 
   host.onSwitchDisplay(async (displayId) => {
     if (!sender) return;
+    currentDisplayId = displayId;
+    if (snap) { snap.displayId = displayId; return; } // chế độ ảnh chụp: chỉ cần đổi màn hình nguồn
     try {
-      const next = await captureDisplay(displayId);
+      let next;
+      try {
+        next = await captureDisplay(displayId);
+      } catch (e) {
+        console.warn('[capture] đổi màn hình lỗi, dùng ảnh chụp:', e.message);
+        next = await startSnapshot(displayId);
+        scheduleLiveRetry(sessionSeq);
+      }
       await sender.replaceTrack(next.getVideoTracks()[0]);
       if (stream) stream.getTracks().forEach((t) => t.stop());
       stream = next;
@@ -112,5 +214,5 @@
     await applyQuality();
   });
 
-  host.onSessionEnd(stopSession);
+  host.onSessionEnd(() => { sessionSeq++; stopSession(); });
 })();

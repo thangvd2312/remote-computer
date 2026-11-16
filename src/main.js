@@ -100,9 +100,44 @@ function listAddresses() {
   return out.sort((x, y) => Number(y.tailscale) - Number(x.tailscale));
 }
 
+// ---------------- Màn hình ----------------
+// Khi máy khoá và màn hình đã tắt, macOS không còn liệt kê màn hình nào -> Electron trả về
+// 1 màn hình giả kích thước 0×0. Xin chụp với kích thước đó thì ScreenCaptureKit từ chối
+// ("invalid width 0 and height 0") -> viewer quay vòng mãi. Nên luôn nhớ danh sách hợp lệ gần nhất.
+let knownDisplays = { list: [], primaryId: null };
+
+function validDisplay(d) {
+  return d && d.size && d.size.width > 0 && d.size.height > 0 && d.bounds && d.bounds.width > 0;
+}
+
+// Danh sách màn hình hiện tại; nếu hệ thống đang báo 0×0 thì dùng bản đã nhớ
+function displays() {
+  const all = screen.getAllDisplays();
+  if (all.length && all.every(validDisplay)) {
+    knownDisplays = { list: all, primaryId: screen.getPrimaryDisplay().id };
+  }
+  return knownDisplays;
+}
+
+function primaryDisplayId() {
+  const { list, primaryId } = displays();
+  return String(primaryId ?? (list[0] ? list[0].id : screen.getPrimaryDisplay().id));
+}
+
+// Đợi màn hình bật lại (sau khi đánh thức) tối đa `ms`; trả về true nếu đã có kích thước hợp lệ
+async function waitForDisplays(ms) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const all = screen.getAllDisplays();
+    if (all.length && all.every(validDisplay)) { displays(); return true; }
+    if (Date.now() >= until) return false;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 function listDisplays() {
-  const primaryId = screen.getPrimaryDisplay().id;
-  return screen.getAllDisplays().map((d, i) => ({
+  const { list, primaryId } = displays();
+  return list.map((d, i) => ({
     id: String(d.id),
     label: d.label || `Màn hình ${i + 1}`,
     width: d.size.width,
@@ -112,7 +147,10 @@ function listDisplays() {
 }
 
 function currentDisplay() {
-  return screen.getAllDisplays().find((d) => String(d.id) === currentDisplayId)
+  const { list, primaryId } = displays();
+  return list.find((d) => String(d.id) === currentDisplayId)
+    || list.find((d) => d.id === primaryId)
+    || list[0]
     || screen.getPrimaryDisplay();
 }
 
@@ -393,9 +431,9 @@ function startSession(ws, ip, send) {
     try { old.ws.close(4002, 'replaced'); } catch {}
   }
   active = { ws, ip, send, since: Date.now() };
-  currentDisplayId = String(screen.getPrimaryDisplay().id);
+  lock.wakeDisplay(); // máy khoá lâu thì màn hình đã tắt -> bật lại để có hình
   if (settings.keepAwake) startKeepAwake();
-  lock.wakeDisplay();
+  currentDisplayId = primaryDisplayId();
   log('connect', ip, 'Bắt đầu điều khiển');
   send({
     type: 'auth-ok',
@@ -512,7 +550,15 @@ ipcMain.handle('open-settings', (_e, kind) => {
 ipcMain.handle('open-releases', () => shell.openExternal(PKG.remoteComputer.releasesUrl));
 ipcMain.handle('open-guide', () => shell.openExternal(PKG.remoteComputer.guideUrl));
 
+// Chỉ để kiểm thử: RC_TEST_LIVE_FAIL_MS=10000 -> luồng trực tiếp "lỗi" trong 10s đầu mỗi phiên
+// (giả lập máy khoá + màn hình tắt) để thử chế độ ảnh chụp và việc tự chuyển lại hình trực tiếp.
+const TEST_LIVE_FAIL_MS = Number(process.env.RC_TEST_LIVE_FAIL_MS) || 0;
+
 ipcMain.handle('get-source', async (_e, displayId) => {
+  if (TEST_LIVE_FAIL_MS && active && Date.now() - active.since < TEST_LIVE_FAIL_MS) {
+    throw new Error('Could not start video source (giả lập)');
+  }
+  lock.wakeDisplay(); // màn hình đang tắt thì không chụp được (macOS báo kích thước 0×0)
   let sources;
   try {
     sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
@@ -524,12 +570,29 @@ ipcMain.handle('get-source', async (_e, displayId) => {
   }
   const src = sources.find((s) => s.display_id === displayId) || sources[0];
   if (!src) throw new Error('Không tìm thấy màn hình để chia sẻ (kiểm tra quyền Screen Recording).');
-  const d = screen.getAllDisplays().find((x) => String(x.id) === displayId) || screen.getPrimaryDisplay();
-  return {
-    id: src.id,
-    width: Math.round(d.size.width * d.scaleFactor),
-    height: Math.round(d.size.height * d.scaleFactor),
-  };
+  // Màn hình đang tắt (máy khoá) -> đợi đánh thức xong; vẫn không có thì dùng kích thước đã nhớ
+  const awake = await waitForDisplays(3000);
+  const { list } = displays();
+  const d = list.find((x) => String(x.id) === displayId) || list.find((x) => String(x.id) === src.display_id) || list[0];
+  const size = d && validDisplay(d)
+    ? { width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) }
+    : { width: 0, height: 0 }; // không biết kích thước -> renderer để hệ thống tự chọn
+  console.log(`[capture] màn hình ${displayId} -> nguồn ${src.id} ${size.width}×${size.height}${awake ? '' : ' (màn hình chưa bật, dùng kích thước đã nhớ)'}`);
+  return { id: src.id, ...size };
+});
+
+// Ảnh chụp tĩnh 1 màn hình (chế độ dự phòng khi máy khoá + màn hình tắt, xem stream.js)
+ipcMain.handle('get-snapshot', async (_e, displayId, maxWidth) => {
+  const { list } = displays();
+  const d = list.find((x) => String(x.id) === displayId) || list[0];
+  const pw = d ? Math.round(d.size.width * d.scaleFactor) : 1920;
+  const ph = d ? Math.round(d.size.height * d.scaleFactor) : 1080;
+  const width = Math.min(Number(maxWidth) || 1600, pw);
+  const height = Math.round((ph * width) / pw);
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } });
+  const src = sources.find((x) => x.display_id === displayId) || sources[0];
+  if (!src || src.thumbnail.isEmpty()) return null;
+  return { jpeg: src.thumbnail.toJPEG(85) };
 });
 
 ipcMain.on('signal', (_e, msg) => {
@@ -563,6 +626,9 @@ function createWindow() {
 app.whenReady().then(() => {
   loadSettings();
   detectAdmin();
+  // Nhớ danh sách màn hình lúc còn bật để dùng khi máy khoá/màn hình tắt
+  displays();
+  for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(ev, () => displays());
   // Chạy dev (npm start) trên macOS: Dock hiện icon Electron mặc định -> thay bằng logo app
   if (PLATFORM === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(ROOT, 'build', 'icon.png'));
 
