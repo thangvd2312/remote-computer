@@ -506,78 +506,76 @@ video.addEventListener('touchcancel', endTouch);
 
 // ---------------- Bàn phím ảo (điện thoại) ----------------
 // Bàn phím ảo không cho mã phím tin cậy (Android luôn báo 229/"Unidentified"),
-// nên đọc chữ từ 1 ô nhập ẩn rồi đổi từng ký tự thành phím (theo bố cục US).
-// Ký tự ngoài ASCII (tiếng Việt có dấu…) gửi nguyên chuỗi cho host gõ theo Unicode.
+// nên đọc chữ từ 1 ô nhập ẩn rồi gửi văn bản cho host gõ.
+//
+// Không dựa vào loại sự kiện (insertText, deleteContentBackward, insertReplacementText, composition…):
+// mỗi bàn phím sửa chữ một kiểu (Telex iOS xoá lùi rồi gõ lại "ếng", chọn từ gợi ý thì thay cả từ,
+// tự sửa chính tả…). Thay vào đó so nội dung ô nhập trước/sau: xoá bao nhiêu chữ cuối, thêm chữ gì
+// -> gửi đúng số Backspace + chữ mới. Ô nhập giữ nguyên chữ đang gõ để bàn phím còn ngữ cảnh.
 const kbd = $('kbd');
 const KBD_SENTINEL = '    '; // giữ sẵn chữ để phím xoá luôn bắn sự kiện
+const KBD_MAX = 300;          // ô nhập dài quá thì làm mới (khi đã hết từ)
+let kbdLast = KBD_SENTINEL;   // nội dung ô nhập đã gửi sang host
+let kbdComposing = false;
+const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+// Tách theo ký tự hiển thị (emoji ghép, chữ + dấu rời) — 1 Backspace trên host xoá đúng 1 ký tự như vậy
+const graphemes = (str) => (segmenter ? Array.from(segmenter.segment(str), (x) => x.segment) : Array.from(str));
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-const SHIFTED = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
-  '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
-const PUNCT_CODE = { '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash',
-  ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote', ' ': 'Space' };
 // Bàn phím iOS hay tự đổi sang dấu "cong" -> đổi lại dấu thẳng
 const SMART = { '‘': "'", '’': "'", '“': '"', '”': '"', ' ': ' ' };
 
-// Ký tự -> { code, shift } trên bàn phím US; null nếu không có phím tương ứng
-function charToKey(ch) {
-  if (/^[a-z]$/.test(ch)) return { code: `Key${ch.toUpperCase()}`, shift: false };
-  if (/^[A-Z]$/.test(ch)) return { code: `Key${ch}`, shift: true };
-  if (/^[0-9]$/.test(ch)) return { code: `Digit${ch}`, shift: false };
-  if (ch === '\n') return { code: 'Enter', shift: false };
-  if (ch === '\t') return { code: 'Tab', shift: false };
-  if (PUNCT_CODE[ch]) return { code: PUNCT_CODE[ch], shift: false };
-  const base = SHIFTED[ch];
-  if (base) return { code: /^[0-9]$/.test(base) ? `Digit${base}` : PUNCT_CODE[base], shift: true };
-  return null;
-}
-
+// Chữ từ bàn phím ảo đã được bộ gõ của điện thoại ghép xong (Telex, VNI…) -> gửi nguyên văn bản để host
+// gõ thẳng, KHÔNG gửi thành từng phím: nếu host cũng đang bật Telex thì phím sẽ bị ghép dấu lần nữa
+// ("tieengs" -> "têtêếng", "dduwowcj" -> "đươđươợc"). Riêng xuống dòng / Tab gửi phím thật.
 function typeText(text) {
   if (!active || !state.input || !text) return;
-  let uni = '';
-  const flushUni = () => { if (uni) { sendInput({ t: 'tx', s: uni }); uni = ''; } };
+  let buf = '';
+  const flush = () => { if (buf) { sendInput({ t: 'tx', s: buf }); buf = ''; } };
   for (const raw of text.normalize('NFC')) {
     const ch = SMART[raw] || raw;
-    const k = charToKey(ch);
-    if (!k) { uni += ch; if (uni.length >= 100) flushUni(); continue; }
-    flushUni();
-    if (k.shift) sendInput({ t: 'kd', code: 'ShiftLeft' });
-    tap(k.code);
-    if (k.shift) sendInput({ t: 'ku', code: 'ShiftLeft' });
+    if (ch === '\n' || ch === '\r') { flush(); tap('Enter'); }
+    else if (ch === '\t') { flush(); tap('Tab'); }
+    else { buf += ch; if (buf.length >= 100) flush(); }
   }
-  flushUni();
+  flush();
 }
 
 function resetKbd() {
   kbd.value = KBD_SENTINEL;
+  kbdLast = KBD_SENTINEL;
   try { kbd.setSelectionRange(KBD_SENTINEL.length, KBD_SENTINEL.length); } catch { /* bỏ qua */ }
 }
 
-// Phím đặc biệt: iOS có báo e.key đúng -> gửi luôn; Android báo "Unidentified" -> để sự kiện input xử lý
-const SPECIAL_KEYS = new Set(['Backspace', 'Enter', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
+// So ô nhập với lần trước rồi gửi phần khác nhau sang host
+function syncKbd() {
+  const cur = kbd.value;
+  if (cur === kbdLast) return;
+  const a = graphemes(kbdLast);
+  const b = graphemes(cur);
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  kbdLast = cur;
+  if (active && state.input) {
+    for (let i = 0; i < Math.min(a.length - p, 200); i++) tap('Backspace');
+    typeText(b.slice(p).join(''));
+  }
+  // Đã xoá lấn vào phần đệm, xuống dòng, hoặc quá dài (sau dấu cách) -> làm mới ô nhập
+  if (!kbdComposing && (!cur.startsWith(KBD_SENTINEL) || /\n$/.test(cur) || (cur.length > KBD_MAX && /\s$/.test(cur)))) resetKbd();
+}
+
+// Phím đặc biệt từ bàn phím rời (iPad…) mà ô nhập không tự phản ánh được. Backspace/Enter KHÔNG chặn
+// ở đây: để ô nhập tự đổi rồi syncKbd gửi, bàn phím ảo mới giữ đúng ngữ cảnh chữ đang gõ.
+const SPECIAL_KEYS = new Set(['Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
 kbd.addEventListener('keydown', (e) => {
   if (!active || e.isComposing || !SPECIAL_KEYS.has(e.key)) return;
   e.preventDefault();
   if (state.input) tap(e.key); // tên các phím này trùng với KeyboardEvent.code
+  resetKbd(); // con trỏ trên host đã đi chỗ khác -> chữ trong ô nhập không còn là chữ ngay trước con trỏ
 });
 
-kbd.addEventListener('input', (e) => {
-  if (e.isComposing) return; // đang gõ bộ gõ (Telex, tiếng Nhật…) -> đợi compositionend
-  const type = e.inputType || '';
-  if (state.input && active) {
-    if (type === 'insertLineBreak' || type === 'insertParagraph') tap('Enter');
-    else if (type.startsWith('delete')) {
-      const n = Math.max(1, KBD_SENTINEL.length - kbd.value.length);
-      for (let i = 0; i < Math.min(n, 50); i++) tap(type.includes('Forward') ? 'Delete' : 'Backspace');
-    } else if (e.data) typeText(e.data);
-    else if (type === 'insertFromPaste' || !type) typeText(kbd.value.replace(/^ +/, ''));
-  }
-  resetKbd();
-});
-
-kbd.addEventListener('compositionend', (e) => {
-  if (e.data) typeText(e.data);
-  resetKbd();
-});
+kbd.addEventListener('compositionstart', () => { kbdComposing = true; });
+kbd.addEventListener('compositionend', () => { kbdComposing = false; syncKbd(); });
+kbd.addEventListener('input', syncKbd);
 
 function setKbd(open) {
   if (open) { resetKbd(); kbd.focus(); } else kbd.blur();
@@ -594,13 +592,14 @@ $('kbd-bar').addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (b.id === 'kbd-close') { setKbd(false); return; }
   if (active && state.input) tap(b.dataset.key);
+  resetKbd();
 }, { passive: false });
 $('kbd-bar').addEventListener('click', (e) => {
   // chuột/bút (không phải chạm)
   const b = e.target.closest('button');
   if (!b) return;
   if (b.id === 'kbd-close') setKbd(false);
-  else if (active && state.input) tap(b.dataset.key);
+  else if (active && state.input) { tap(b.dataset.key); resetKbd(); }
 });
 
 // Đặt thanh phím phụ ngay trên bàn phím ảo

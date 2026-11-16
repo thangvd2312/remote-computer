@@ -1,6 +1,6 @@
 {
   "name": "remote-computer",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Tự điều khiển máy tính từ xa qua Tailscale/LAN",
   "author": "Thang Vu",
@@ -36,7 +36,9 @@
       "viewer/**/*",
       "shared/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!**/node_modules/koffi/build/koffi/!(darwin_*)/**",
+      "!**/node_modules/koffi/{src,doc,vendor}/**"
     ],
     "asarUnpack": [
       "**/*.node"
@@ -93,6 +95,7 @@
     "@nut-tree-fork/libnut-darwin": "^2.7.5",
     "@nut-tree-fork/libnut-linux": "^2.7.5",
     "@nut-tree-fork/libnut-win32": "^2.7.5",
+    "koffi": "2.16.3",
     "ws": "^8.23.0"
   },
   "devDependencies": {

@@ -56,6 +56,7 @@ let clipTimer = null;
 let lastClip = '';       // nội dung clipboard host đã biết, tránh gửi lặp/vọng lại
 let isAdmin = null;      // Windows: app có đang chạy quyền Administrator không
 let lockState = { isLocked: () => false }; // gán thật trong app.whenReady
+input.setLockedProvider(() => lockState.isLocked()); // màn hình khoá: gõ chữ bằng phím thật
 const failures = new Map(); // ip -> { count, until }
 const activity = [];        // nhật ký kết nối
 const blockedLogAt = new Map(); // ip -> lần cuối ghi log "bị chặn" (tránh spam)

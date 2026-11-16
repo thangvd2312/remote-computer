@@ -16,6 +16,12 @@ try {
 
 const IS_MAC = process.platform === 'darwin';
 
+// macOS: phím thường gửi bằng mã phím vật lý (xem mackeys.js) — libnut làm sập app khi host đang ở kiểu gõ tiếng Việt
+let mac = null;
+if (IS_MAC) {
+  try { mac = require('./mackeys'); } catch (e) { console.error('[input] mackeys', e.message); }
+}
+
 // KeyboardEvent.code (trình duyệt) -> tên phím của libnut
 const CODE_MAP = {
   Space: 'space', Enter: 'enter', NumpadEnter: 'enter', Tab: 'tab', Escape: 'escape',
@@ -58,13 +64,30 @@ const MODIFIER_FLAG = {
 
 const BUTTONS = ['left', 'middle', 'right'];
 
-const heldKeys = new Set();     // tên phím libnut đang giữ
+// Ký tự -> phím trên bàn phím US (để gõ bằng phím thật khi cần, vd. ô mật khẩu màn hình khoá macOS)
+const SHIFTED = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+  '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+const PUNCT_CODE = { '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash',
+  ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote', ' ': 'Space' };
+function charToKey(ch) {
+  if (/^[a-z]$/.test(ch)) return { code: `Key${ch.toUpperCase()}`, shift: false };
+  if (/^[A-Z]$/.test(ch)) return { code: `Key${ch}`, shift: true };
+  if (/^[0-9]$/.test(ch)) return { code: `Digit${ch}`, shift: false };
+  if (PUNCT_CODE[ch]) return { code: PUNCT_CODE[ch], shift: false };
+  const base = SHIFTED[ch];
+  if (base) return { code: /^[0-9]$/.test(base) ? `Digit${base}` : PUNCT_CODE[base], shift: true };
+  return null;
+}
+
+let isLocked = () => false;
+
+const heldKeys = new Set();     // KeyboardEvent.code của các phím đang giữ
 const heldButtons = new Set();  // nút chuột đang giữ
 const swallowUp = new Set();    // nút cần bỏ qua mouseup (sau khi đã giả lập double-click trên macOS)
 
 function modifierFlags() {
   const flags = new Set();
-  for (const k of heldKeys) if (MODIFIER_FLAG[k]) flags.add(MODIFIER_FLAG[k]);
+  for (const c of heldKeys) { const k = codeToKey(c); if (MODIFIER_FLAG[k]) flags.add(MODIFIER_FLAG[k]); }
   return [...flags];
 }
 
@@ -81,12 +104,39 @@ function keyFlags() {
 // Đã thử: 0 ms thì Shift vẫn kẹt, 8 ms thì đúng.
 const MODIFIER_SETTLE_MS = 8;
 const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
-function settleModifier(key) {
-  if (IS_MAC && MODIFIER_FLAG[key]) Atomics.wait(sleepBuf, 0, 0, MODIFIER_SETTLE_MS);
+function settleModifier(code) {
+  if (IS_MAC && MODIFIER_FLAG[codeToKey(code)]) Atomics.wait(sleepBuf, 0, 0, MODIFIER_SETTLE_MS);
 }
 
 function safe(fn) {
   try { fn(); } catch (e) { /* phím không hỗ trợ trên OS này -> bỏ qua */ }
+}
+
+// Nhấn/nhả 1 phím theo KeyboardEvent.code
+function keyToggle(code, down) {
+  if (mac && mac.key(code, down)) return;
+  const key = codeToKey(code);
+  if (!key) return;
+  // macOS: KHÔNG để libnut tự tra phím chữ/số/dấu (sập app khi host đang gõ tiếng Việt), chỉ phím có mã cố định
+  if (IS_MAC && key.length === 1) return;
+  safe(() => nut.keyToggle(key, down ? 'down' : 'up', keyFlags()));
+}
+
+// macOS: gõ chữ từ bàn phím ảo (đã ghép dấu sẵn trên điện thoại)
+function typeTextMac(s) {
+  // Màn hình khoá: gõ bằng phím thật như trước (đã kiểm chứng với ô mật khẩu).
+  // Host đang bật bộ gõ (Telex…): gõ thẳng ký tự, né bộ gõ để không bị ghép dấu lần nữa.
+  // Còn lại: chữ ASCII gõ bằng phím thật (giống người gõ nhất), chữ có dấu/emoji gõ theo Unicode.
+  const locked = isLocked();
+  const bypass = !locked && mac.inputMethodActive();
+  for (const ch of s) {
+    const k = bypass ? null : charToKey(ch);
+    if (!k) { mac.typeChar(ch, bypass); continue; }
+    if (k.shift) mac.key('ShiftLeft', true);
+    mac.key(k.code, true);
+    mac.key(k.code, false);
+    if (k.shift) mac.key('ShiftLeft', false);
+  }
 }
 
 function move(x, y) {
@@ -144,25 +194,23 @@ function handle(msg, toScreen) {
       break;
     }
     case 'kd': {
-      const key = codeToKey(msg.code);
-      if (!key) return;
-      heldKeys.add(key);
-      safe(() => nut.keyToggle(key, 'down', keyFlags()));
-      settleModifier(key);
+      if (typeof msg.code !== 'string') return;
+      heldKeys.add(msg.code);
+      keyToggle(msg.code, true);
+      settleModifier(msg.code);
       break;
     }
     case 'ku': {
-      const key = codeToKey(msg.code);
-      if (!key) return;
-      heldKeys.delete(key);
-      safe(() => nut.keyToggle(key, 'up', keyFlags()));
-      settleModifier(key);
+      if (typeof msg.code !== 'string') return;
+      heldKeys.delete(msg.code);
+      keyToggle(msg.code, false);
+      settleModifier(msg.code);
       break;
     }
     case 'tx': {
-      // Chữ ngoài ASCII (tiếng Việt có dấu, emoji…) từ bàn phím ảo điện thoại: gõ thẳng theo Unicode
+      // Chữ từ bàn phím ảo điện thoại (đã ghép dấu sẵn): gõ thẳng
       if (typeof msg.s !== 'string' || !msg.s || msg.s.length > 200) return;
-      safe(() => nut.typeString(msg.s));
+      safe(() => (mac ? typeTextMac(msg.s) : nut.typeString(msg.s)));
       break;
     }
   }
@@ -171,9 +219,9 @@ function handle(msg, toScreen) {
 // Nhả mọi phím/nút đang giữ (khi viewer mất kết nối) để không bị "kẹt phím"
 function releaseAll() {
   if (!nut) return;
-  for (const key of [...heldKeys]) {
-    heldKeys.delete(key);
-    safe(() => nut.keyToggle(key, 'up', []));
+  for (const code of [...heldKeys]) {
+    heldKeys.delete(code);
+    keyToggle(code, false);
   }
   for (const btn of [...heldButtons]) {
     heldButtons.delete(btn);
@@ -182,4 +230,7 @@ function releaseAll() {
   swallowUp.clear();
 }
 
-module.exports = { handle, releaseAll, available: () => !!nut, loadError: () => loadError };
+module.exports = {
+  handle, releaseAll, available: () => !!nut, loadError: () => loadError,
+  setLockedProvider: (fn) => { isLocked = fn; },
+};
