@@ -64,6 +64,7 @@ async function onMessage(msg) {
       fillDisplays(msg.displays, msg.display);
       applyHostSettings({ input: msg.inputAvailable, clipboard: msg.clipboard });
       setHostLocked(!!msg.locked, false);
+      showTouchControls(true);
       showDock(true, 2500); // hiện thanh công cụ lúc đầu để người dùng biết nó ở đâu
       break;
     case 'auth-fail':
@@ -105,6 +106,7 @@ function applyHostSettings({ input, clipboard }) {
   state.input = !!input;
   state.clipAvailable = !!clipboard;
   if (!state.input) releaseAllKeys();
+  if (active) showTouchControls(true);
   if (!state.input && (wasInput || !active)) toast('Host đang ở chế độ chỉ xem — không điều khiển được', 'info', 4000);
   else if (state.input && !wasInput) toast('Host đã bật lại điều khiển', 'mouse-pointer-2', 2500);
   renderTiles();
@@ -138,6 +140,7 @@ function teardown(reason) {
   clearInterval(statsTimer);
   video.srcObject = null;
   $('lock-badge').hidden = true;
+  showTouchControls(false);
   $('remote').hidden = true;
   $('login').hidden = false;
   $('connect-btn').disabled = false;
@@ -375,6 +378,228 @@ function releaseAllKeys() {
 // Chuyển sang tab/cửa sổ khác thì nhả hết phím để tránh kẹt phím trên host
 window.addEventListener('blur', releaseAllKeys);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllKeys(); });
+
+// ---------------- Cảm ứng (điện thoại / máy tính bảng) ----------------
+//  Chạm = click trái · chạm 2 lần = double-click · giữ ~0.6s = click phải
+//  1 ngón kéo = kéo-thả chuột trái · 2 ngón kéo = cuộn
+const TOUCH_SLOP = 10;        // px: di chuyển ít hơn vẫn tính là chạm
+const LONG_PRESS_MS = 600;
+const DOUBLE_TAP_MS = 350;
+let touch = null;             // { mode: 'pending'|'drag'|'scroll'|'done', x0, y0, timer, mid }
+let lastTap = { at: 0, x: 0, y: 0 };
+
+function touchPoint(t) { return norm(t, true); }
+function midpoint(ts) { return { x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2 }; }
+// px trên màn hình điện thoại -> px trên màn hình host
+function hostScale() {
+  const r = video.getBoundingClientRect();
+  if (!video.videoWidth || !r.width) return 1;
+  return 1 / Math.min(r.width / video.videoWidth, r.height / video.videoHeight);
+}
+
+function endTouch() {
+  if (!touch) return;
+  clearTimeout(touch.timer);
+  if (touch.mode === 'drag') {
+    flush();
+    buttonsDown.delete(0);
+    sendInput({ t: 'mu', b: 0 });
+  }
+  touch = null;
+}
+
+video.addEventListener('touchstart', (e) => {
+  if (!active) return;
+  e.preventDefault(); // chặn chuột giả lập + phóng to của trình duyệt
+  flushPendingCopy();
+  if ($('dock').classList.contains('shown') && !dockPinned) showDock(false);
+  if (!state.input) return;
+  if (e.touches.length >= 2) {
+    // ngón thứ 2 đặt xuống -> chuyển sang cuộn
+    endTouch();
+    touch = { mode: 'scroll', mid: midpoint(e.touches) };
+    return;
+  }
+  const t = e.touches[0];
+  touch = { mode: 'pending', x0: t.clientX, y0: t.clientY };
+  touch.timer = setTimeout(() => {
+    // giữ yên -> click phải
+    if (!touch || touch.mode !== 'pending') return;
+    const p = touchPoint(t);
+    if (p) { sendInput({ t: 'md', b: 2, x: p.x, y: p.y, n: 1 }); sendInput({ t: 'mu', b: 2, x: p.x, y: p.y }); }
+    if (navigator.vibrate) navigator.vibrate(15);
+    touch.mode = 'done';
+  }, LONG_PRESS_MS);
+}, { passive: false });
+
+video.addEventListener('touchmove', (e) => {
+  if (!active || !touch) return;
+  e.preventDefault();
+  if (touch.mode === 'scroll' && e.touches.length >= 2) {
+    const m = midpoint(e.touches);
+    const k = hostScale();
+    // ngón đi lên = nội dung cuộn xuống (giống cuộn trên điện thoại)
+    wheel.dx += (touch.mid.x - m.x) * k;
+    wheel.dy += (touch.mid.y - m.y) * k;
+    touch.mid = m;
+    schedule();
+    return;
+  }
+  const t = e.touches[0];
+  if (touch.mode === 'pending') {
+    if (Math.hypot(t.clientX - touch.x0, t.clientY - touch.y0) < TOUCH_SLOP) return;
+    clearTimeout(touch.timer);
+    const p0 = touchPoint({ clientX: touch.x0, clientY: touch.y0 });
+    if (!p0) { touch.mode = 'done'; return; }
+    touch.mode = 'drag';
+    buttonsDown.add(0);
+    sendInput({ t: 'md', b: 0, x: p0.x, y: p0.y, n: 1 });
+  }
+  if (touch.mode === 'drag') {
+    const p = touchPoint(t);
+    if (p) { pendingMove = p; schedule(); }
+  }
+}, { passive: false });
+
+video.addEventListener('touchend', (e) => {
+  if (!active || !touch) return;
+  e.preventDefault();
+  if (touch.mode === 'scroll') {
+    if (e.touches.length === 0) touch = null;
+    return;
+  }
+  if (touch.mode === 'pending') {
+    clearTimeout(touch.timer);
+    const p = touchPoint({ clientX: touch.x0, clientY: touch.y0 });
+    if (p) {
+      const now = performance.now();
+      const dbl = now - lastTap.at < DOUBLE_TAP_MS && Math.hypot(touch.x0 - lastTap.x, touch.y0 - lastTap.y) < 30;
+      sendInput({ t: 'md', b: 0, x: p.x, y: p.y, n: dbl ? 2 : 1 });
+      sendInput({ t: 'mu', b: 0, x: p.x, y: p.y });
+      lastTap = dbl ? { at: 0, x: 0, y: 0 } : { at: now, x: touch.x0, y: touch.y0 };
+    }
+    touch = null;
+    return;
+  }
+  endTouch();
+}, { passive: false });
+
+video.addEventListener('touchcancel', endTouch);
+
+// ---------------- Bàn phím ảo (điện thoại) ----------------
+// Bàn phím ảo không cho mã phím tin cậy (Android luôn báo 229/"Unidentified"),
+// nên đọc chữ từ 1 ô nhập ẩn rồi đổi từng ký tự thành phím (theo bố cục US).
+// Ký tự ngoài ASCII (tiếng Việt có dấu…) gửi nguyên chuỗi cho host gõ theo Unicode.
+const kbd = $('kbd');
+const KBD_SENTINEL = '    '; // giữ sẵn chữ để phím xoá luôn bắn sự kiện
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const SHIFTED = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+  '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+const PUNCT_CODE = { '-': 'Minus', '=': 'Equal', '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash',
+  ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash', '`': 'Backquote', ' ': 'Space' };
+// Bàn phím iOS hay tự đổi sang dấu "cong" -> đổi lại dấu thẳng
+const SMART = { '‘': "'", '’': "'", '“': '"', '”': '"', ' ': ' ' };
+
+// Ký tự -> { code, shift } trên bàn phím US; null nếu không có phím tương ứng
+function charToKey(ch) {
+  if (/^[a-z]$/.test(ch)) return { code: `Key${ch.toUpperCase()}`, shift: false };
+  if (/^[A-Z]$/.test(ch)) return { code: `Key${ch}`, shift: true };
+  if (/^[0-9]$/.test(ch)) return { code: `Digit${ch}`, shift: false };
+  if (ch === '\n') return { code: 'Enter', shift: false };
+  if (ch === '\t') return { code: 'Tab', shift: false };
+  if (PUNCT_CODE[ch]) return { code: PUNCT_CODE[ch], shift: false };
+  const base = SHIFTED[ch];
+  if (base) return { code: /^[0-9]$/.test(base) ? `Digit${base}` : PUNCT_CODE[base], shift: true };
+  return null;
+}
+
+function typeText(text) {
+  if (!active || !state.input || !text) return;
+  let uni = '';
+  const flushUni = () => { if (uni) { sendInput({ t: 'tx', s: uni }); uni = ''; } };
+  for (const raw of text.normalize('NFC')) {
+    const ch = SMART[raw] || raw;
+    const k = charToKey(ch);
+    if (!k) { uni += ch; if (uni.length >= 100) flushUni(); continue; }
+    flushUni();
+    if (k.shift) sendInput({ t: 'kd', code: 'ShiftLeft' });
+    tap(k.code);
+    if (k.shift) sendInput({ t: 'ku', code: 'ShiftLeft' });
+  }
+  flushUni();
+}
+
+function resetKbd() {
+  kbd.value = KBD_SENTINEL;
+  try { kbd.setSelectionRange(KBD_SENTINEL.length, KBD_SENTINEL.length); } catch { /* bỏ qua */ }
+}
+
+// Phím đặc biệt: iOS có báo e.key đúng -> gửi luôn; Android báo "Unidentified" -> để sự kiện input xử lý
+const SPECIAL_KEYS = new Set(['Backspace', 'Enter', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
+kbd.addEventListener('keydown', (e) => {
+  if (!active || e.isComposing || !SPECIAL_KEYS.has(e.key)) return;
+  e.preventDefault();
+  if (state.input) tap(e.key); // tên các phím này trùng với KeyboardEvent.code
+});
+
+kbd.addEventListener('input', (e) => {
+  if (e.isComposing) return; // đang gõ bộ gõ (Telex, tiếng Nhật…) -> đợi compositionend
+  const type = e.inputType || '';
+  if (state.input && active) {
+    if (type === 'insertLineBreak' || type === 'insertParagraph') tap('Enter');
+    else if (type.startsWith('delete')) {
+      const n = Math.max(1, KBD_SENTINEL.length - kbd.value.length);
+      for (let i = 0; i < Math.min(n, 50); i++) tap(type.includes('Forward') ? 'Delete' : 'Backspace');
+    } else if (e.data) typeText(e.data);
+    else if (type === 'insertFromPaste' || !type) typeText(kbd.value.replace(/^ +/, ''));
+  }
+  resetKbd();
+});
+
+kbd.addEventListener('compositionend', (e) => {
+  if (e.data) typeText(e.data);
+  resetKbd();
+});
+
+function setKbd(open) {
+  if (open) { resetKbd(); kbd.focus(); } else kbd.blur();
+}
+kbd.addEventListener('focus', () => { $('kbd-bar').hidden = false; $('kbd-btn').hidden = true; placeKbdBar(); });
+kbd.addEventListener('blur', () => { $('kbd-bar').hidden = true; $('kbd-btn').hidden = !(IS_TOUCH && active); });
+$('kbd-btn').addEventListener('click', () => setKbd(true)); // focus phải nằm ngay trong thao tác chạm thì iOS mới bật bàn phím
+
+// Thanh phím phụ: giữ focus ở ô nhập (không để bàn phím ảo đóng lại)
+$('kbd-bar').addEventListener('mousedown', (e) => e.preventDefault());
+$('kbd-bar').addEventListener('touchstart', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  e.preventDefault();
+  if (b.id === 'kbd-close') { setKbd(false); return; }
+  if (active && state.input) tap(b.dataset.key);
+}, { passive: false });
+$('kbd-bar').addEventListener('click', (e) => {
+  // chuột/bút (không phải chạm)
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.id === 'kbd-close') setKbd(false);
+  else if (active && state.input) tap(b.dataset.key);
+});
+
+// Đặt thanh phím phụ ngay trên bàn phím ảo
+function placeKbdBar() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  $('kbd-bar').style.bottom = `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`;
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', placeKbdBar);
+  visualViewport.addEventListener('scroll', placeKbdBar);
+}
+
+function showTouchControls(show) {
+  $('kbd-btn').hidden = !(show && IS_TOUCH && state.input);
+  if (!show) { $('kbd-bar').hidden = true; if (document.activeElement === kbd) kbd.blur(); }
+}
 
 // ---------------- Clipboard (chữ) ----------------
 // Trang chạy qua http:// (không phải secure context) nên không có navigator.clipboard.

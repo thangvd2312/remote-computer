@@ -66,6 +66,7 @@ html, body { height: 100%; }
   color: var(--muted); font-size: 12px; cursor: pointer; opacity: .55; transition: opacity .2s;
 }
 #handle:hover { opacity: 1; }
+#handle-name { max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #handle .icon { width: 14px; height: 14px; }
 
 #dock {
@@ -93,6 +94,36 @@ html, body { height: 100%; }
 }
 #lock-badge[hidden] { display: none; }
 #lock-badge .icon { width: 14px; height: 14px; color: var(--cyan); }
+
+/* Màn cảm ứng: tự xử lý chạm, không để trình duyệt cuộn/phóng to */
+#screen { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* Ô nhập ẩn nhận chữ từ bàn phím ảo (font 16px để iOS không tự phóng to trang) */
+#kbd {
+  position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; padding: 0; border: 0;
+  opacity: 0; font-size: 16px; resize: none; pointer-events: none; z-index: -1;
+}
+#kbd-btn {
+  position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 3;
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--line); background: rgba(40, 40, 50, 0.8); backdrop-filter: blur(10px);
+  color: var(--text); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+#kbd-btn[hidden] { display: none; }
+#kbd-btn .icon { width: 24px; height: 24px; }
+#kbd-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto;
+  background: rgba(30, 30, 38, 0.96); border-top: 1px solid var(--line);
+}
+#kbd-bar[hidden] { display: none; }
+#kbd-bar button {
+  flex: 1 0 auto; min-width: 44px; height: 38px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--card-hi); color: var(--text); font-size: 14px;
+  display: grid; place-items: center;
+}
+#kbd-bar button:active { background: #383845; }
+#kbd-bar .icon { width: 16px; height: 16px; }
 
 @media (max-width: 760px) {
   #dock { flex-direction: column; align-items: stretch; }

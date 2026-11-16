@@ -1,6 +1,6 @@
 {
   "name": "remote-computer",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Tự điều khiển máy tính từ xa qua Tailscale/LAN",
   "author": "Thang Vu",

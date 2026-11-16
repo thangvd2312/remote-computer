@@ -68,6 +68,23 @@ function modifierFlags() {
   return [...flags];
 }
 
+// Cờ modifier gắn kèm sự kiện phím.
+// macOS: KHÔNG gắn cờ nào. Hệ thống tự theo dõi Shift/Ctrl/Alt/Cmd từ chính các sự kiện
+// Shift↓/Shift↑ đã gửi. Nếu vừa gửi Shift↓ vừa gắn cờ 'shift' vào phím chữ thì Shift↑
+// không xoá được cờ nữa -> Shift kẹt, mọi chữ gõ sau (kể cả bàn phím thật của máy host) đều in hoa.
+function keyFlags() {
+  return IS_MAC ? [] : modifierFlags();
+}
+
+// macOS: phím bổ trợ cần vài ms mới cập nhật vào trạng thái hệ thống; phím gửi sát ngay sau
+// (chữ từ bàn phím ảo tới dồn cục: Shift↓ B Shift↑ c…) sẽ lấy nhầm trạng thái cũ -> chờ chút.
+// Đã thử: 0 ms thì Shift vẫn kẹt, 8 ms thì đúng.
+const MODIFIER_SETTLE_MS = 8;
+const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+function settleModifier(key) {
+  if (IS_MAC && MODIFIER_FLAG[key]) Atomics.wait(sleepBuf, 0, 0, MODIFIER_SETTLE_MS);
+}
+
 function safe(fn) {
   try { fn(); } catch (e) { /* phím không hỗ trợ trên OS này -> bỏ qua */ }
 }
@@ -130,14 +147,22 @@ function handle(msg, toScreen) {
       const key = codeToKey(msg.code);
       if (!key) return;
       heldKeys.add(key);
-      safe(() => nut.keyToggle(key, 'down', modifierFlags()));
+      safe(() => nut.keyToggle(key, 'down', keyFlags()));
+      settleModifier(key);
       break;
     }
     case 'ku': {
       const key = codeToKey(msg.code);
       if (!key) return;
       heldKeys.delete(key);
-      safe(() => nut.keyToggle(key, 'up', modifierFlags()));
+      safe(() => nut.keyToggle(key, 'up', keyFlags()));
+      settleModifier(key);
+      break;
+    }
+    case 'tx': {
+      // Chữ ngoài ASCII (tiếng Việt có dấu, emoji…) từ bàn phím ảo điện thoại: gõ thẳng theo Unicode
+      if (typeof msg.s !== 'string' || !msg.s || msg.s.length > 200) return;
+      safe(() => nut.typeString(msg.s));
       break;
     }
   }

@@ -72,6 +72,21 @@
 
     <div id="lock-badge" role="status" hidden><span data-icon="lock"></span><span>Máy host đang khoá màn hình</span></div>
 
+    <!-- Điện thoại / máy tính bảng: bàn phím ảo -->
+    <textarea id="kbd" aria-label="Bàn phím" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send"></textarea>
+    <button id="kbd-btn" title="Bàn phím" hidden><span data-icon="keyboard"></span></button>
+    <div id="kbd-bar" hidden>
+      <button data-key="Escape">Esc</button>
+      <button data-key="Tab">Tab</button>
+      <button data-key="ArrowLeft">←</button>
+      <button data-key="ArrowUp">↑</button>
+      <button data-key="ArrowDown">↓</button>
+      <button data-key="ArrowRight">→</button>
+      <button data-key="Backspace">⌫</button>
+      <button data-key="Enter">Enter</button>
+      <button id="kbd-close" title="Ẩn bàn phím"><span data-icon="chevron-down"></span></button>
+    </div>
+
     <div class="toast" id="toast" hidden></div>
   </section>
 
