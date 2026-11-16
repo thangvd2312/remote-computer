@@ -1,7 +1,7 @@
 // Màn hình khoá: phát hiện khoá/mở khoá, đánh thức màn hình, và chế độ thử nghiệm --lock-test.
 //  - macOS / Windows: sự kiện powerMonitor 'lock-screen' / 'unlock-screen'.
 //  - Linux: powerMonitor không có sự kiện này -> hỏi systemd-logind (LockedHint) định kỳ.
-const { app, powerMonitor, desktopCapturer, screen, systemPreferences } = require('electron');
+const { app, BrowserWindow, powerMonitor, desktopCapturer, screen, systemPreferences } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -32,8 +32,17 @@ async function linuxLocked() {
   return idleSaysLocked(); // không có logind -> dựa vào XScreenSaver của Chromium
 }
 
+// macOS: getSystemIdleState() không báo 'locked' trên macOS mới -> đọc cờ phiên đăng nhập từ ioreg
+async function macLocked() {
+  const xml = await run('ioreg', ['-n', 'Root', '-d1', '-a']);
+  if (xml == null) return idleSaysLocked();
+  return /<key>CGSSessionScreenIsLocked<\/key>\s*<true\/>/.test(xml);
+}
+
 async function queryLocked() {
-  return PLATFORM === 'linux' ? linuxLocked() : idleSaysLocked();
+  if (PLATFORM === 'linux') return linuxLocked();
+  if (PLATFORM === 'darwin') return macLocked();
+  return idleSaysLocked();
 }
 
 /**
@@ -137,18 +146,28 @@ async function shot(dir, name) {
   }
 }
 
+const TEST_HTML = `<!doctype html><meta charset="utf-8"><title>Remote Computer — Lock test</title>
+<body style="margin:0;font:14px -apple-system,Segoe UI,sans-serif;background:#1E1E27;color:#E7E9EE;padding:18px">
+<b style="font-size:15px">Đang thử màn hình khoá — đừng đóng cửa sổ này</b>
+<ol style="padding-left:18px;line-height:1.6;margin:10px 0">
+<li>Khoá máy ngay (Mac: ⌃⌘Q · Windows: Win+L · Linux: Super+L)</li>
+<li>Đợi khoảng 20 giây rồi mở khoá như bình thường</li>
+<li>Nếu ô mật khẩu có sẵn ký tự lạ, xoá đi rồi gõ mật khẩu</li></ol>
+<div style="color:#09D3FF">Trạng thái: <span id="s">đang chờ khoá máy…</span></div></body>`;
+
 async function runLockTest(argv, input, shell) {
   const delay = lockTestDelay(argv);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dir = path.join(app.getPath('userData'), `lock-test-${stamp}`);
   fs.mkdirSync(dir, { recursive: true });
-  const note = (...a) => console.log('[lock-test]', ...a);
+  const reportFile = path.join(dir, 'report.json');
 
   const report = {
     platform: PLATFORM,
     osRelease: os.release(),
     arch: process.arch,
     electron: process.versions.electron,
+    appVersion: app.getVersion(),
     packaged: app.isPackaged,
     execPath: process.execPath,
     session: PLATFORM === 'linux' ? (process.env.XDG_SESSION_TYPE || null) : undefined,
@@ -158,9 +177,38 @@ async function runLockTest(argv, input, shell) {
     } : undefined,
     inputLoadError: input.loadError()?.message || null,
     delaySec: delay,
+    done: false,
     events: [],
   };
-  const ev = (what) => { report.events.push({ t: Date.now(), what }); note(what); };
+  // Ghi report sau MỖI bước: tiến trình có bị tắt giữa chừng vẫn biết dừng ở đâu
+  const save = () => { try { fs.writeFileSync(reportFile, JSON.stringify(report, null, 2)); } catch {} };
+
+  // Cửa sổ nhỏ báo trạng thái (không có cửa sổ thì người dùng dễ tưởng app treo rồi tắt mất)
+  const win = new BrowserWindow({
+    width: 460, height: 240, resizable: false, alwaysOnTop: true, title: 'Remote Computer — Lock test',
+    backgroundColor: '#1E1E27', webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(TEST_HTML)}`);
+  const status = (s) => {
+    if (!win.isDestroyed()) win.webContents.executeJavaScript(`document.getElementById('s').textContent=${JSON.stringify(s)}`).catch(() => {});
+  };
+  const ev = (what) => {
+    report.events.push({ t: new Date().toISOString(), what });
+    console.log('[lock-test]', what);
+    save();
+    status(what);
+  };
+  let finishing = false;
+  const finish = (aborted) => {
+    if (finishing) return;
+    finishing = true;
+    if (aborted) report.aborted = aborted;
+    save();
+    app.quit();
+  };
+  win.on('closed', () => { if (!report.done && !finishing) { ev('người dùng đóng cửa sổ test'); finish('Cửa sổ test bị đóng trước khi xong'); } });
+  app.on('before-quit', () => { if (!report.done && !finishing) { ev('app bị thoát trước khi test xong'); save(); } });
+
   let eventLocked = false;
   powerMonitor.on('lock-screen', () => { eventLocked = true; ev('powerMonitor: lock-screen'); });
   powerMonitor.on('unlock-screen', () => { eventLocked = false; ev('powerMonitor: unlock-screen'); });
@@ -168,32 +216,22 @@ async function runLockTest(argv, input, shell) {
 
   // An toàn: chỉ gõ phím khi máy ĐANG khoá, tránh gõ "abc" vào cửa sổ người dùng đang làm việc.
   report.lockedBefore = await isLocked();
-  note(`Đang chờ khoá màn hình (tối đa 15 phút). Khoá xong ${delay}s sẽ chụp + gõ thử "abc". Kết quả: ${dir}`);
+  ev(`bắt đầu, đang chờ khoá máy (tối đa 15 phút). Kết quả: ${dir}`);
   for (let i = 0; i < 900 && !(await isLocked()); i++) await sleep(1000);
-  if (!(await isLocked())) {
-    report.aborted = 'Hết 15 phút mà máy không khoá — không chạy test';
-    fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2));
-    note(report.aborted);
-    app.quit();
-    return;
-  }
+  if (!(await isLocked())) return finish('Hết 15 phút mà máy không khoá — không chạy test');
   ev('phát hiện đã khoá');
   await sleep(delay * 1000);
 
   report.lockedDuring = await isLocked();
   ev(`trạng thái khoá khi test: ${report.lockedDuring}`);
-  if (!report.lockedDuring) {
-    report.aborted = 'Máy đã mở khoá trước khi test — không gõ phím';
-    fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2));
-    note(report.aborted);
-    app.quit();
-    return;
-  }
+  if (!report.lockedDuring) return finish('Máy đã mở khoá trước khi test — không gõ phím');
   lastWake = 0;
   wakeDisplay();
   await sleep(2000);
 
+  const strip = ({ buf, ...s }) => s;
   const before = await shot(dir, '1-truoc-khi-go');
+  report.shots = [strip(before)];
   ev('đã chụp ảnh 1');
   for (const code of ['KeyA', 'KeyB', 'KeyC']) {
     input.handle({ t: 'kd', code }, () => ({ x: 0, y: 0 }));
@@ -203,26 +241,23 @@ async function runLockTest(argv, input, shell) {
   ev('đã gõ "abc"');
   await sleep(1500);
   const after = await shot(dir, '2-sau-khi-go');
+  report.shots.push(strip(after));
+  report.diffRatio = diffRatio(before.buf, after.buf); // > 0: hình có thay đổi sau khi gõ (thường là dấu chấm mật khẩu)
   ev('đã chụp ảnh 2');
   for (let i = 0; i < 3; i++) {
     input.handle({ t: 'kd', code: 'Backspace' }, () => ({ x: 0, y: 0 }));
     input.handle({ t: 'ku', code: 'Backspace' }, () => ({ x: 0, y: 0 }));
     await sleep(100);
   }
-  ev('đã xoá 3 ký tự');
   input.releaseAll();
-
-  report.shots = [before, after].map(({ buf, ...s }) => s);
-  report.diffRatio = diffRatio(before.buf, after.buf); // > 0: hình có thay đổi sau khi gõ (thường là dấu chấm mật khẩu)
-  const reportFile = path.join(dir, 'report.json');
-  fs.writeFileSync(reportFile, JSON.stringify(report, null, 2));
-  note(`Xong. Báo cáo: ${reportFile}`);
+  report.done = true;
+  ev('xong — đã xoá 3 ký tự. Mở khoá máy để xem kết quả');
 
   // Đợi người dùng mở khoá (tối đa 10 phút) rồi mở thư mục kết quả
   for (let i = 0; i < 300 && await isLocked(); i++) await sleep(2000);
   shell.showItemInFolder(reportFile);
   await sleep(1000);
-  app.quit();
+  finish();
 }
 
 module.exports = { watch, wakeDisplay, queryLocked, lockTestDelay, runLockTest };
